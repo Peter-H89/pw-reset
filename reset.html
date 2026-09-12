@@ -104,11 +104,23 @@ const $torch  = document.getElementById('torchBtn');
 const $preview = document.getElementById('preview');
 const pctx = $preview.getContext('2d');
 
-// --- config: backend URL, token and phone id, set once via long-press on the logo ---
+// --- config: backend URL, token and phone id ---------------------------------
+// Set once, either by opening the page with the values in the URL fragment
+//   reset.html#url=<exec url>&token=<token>&phone=onthaal-1
+// (stored, then stripped from the address bar), or by long-pressing the logo.
 const CFG_KEY = 'pw-reset-config';
 let cfg = {};
 try { cfg = JSON.parse(localStorage.getItem(CFG_KEY) || '{}'); } catch (e) { cfg = {}; }
 const configured = () => !!(cfg.backendUrl && cfg.token);
+{
+  const h = new URLSearchParams(location.hash.replace(/^#/, ''));
+  if (h.get('url') && h.get('token')) {
+    cfg = { backendUrl: h.get('url').trim(), token: h.get('token').trim(),
+            phoneId: (h.get('phone') || 'onthaal-1').trim() };
+    try { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); } catch (e) {}
+    history.replaceState(null, '', location.pathname);
+  }
+}
 
 function configure() {
   const url = prompt('Backend URL (/exec)', cfg.backendUrl || '');
