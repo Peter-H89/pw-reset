@@ -71,7 +71,7 @@
 </div>
 <div id="manual">
   <input id="serialInput" type="text" inputmode="text" autocapitalize="characters"
-         placeholder="…of typ het serienummer en druk Enter">
+         placeholder="…of typ serienummer, CB-nummer of account en druk Enter">
 </div>
 <div id="status">starting…</div>
 
@@ -151,7 +151,8 @@ let backLine = configured() ? 'backend: configured' : 'backend: NOT configured (
 let busy = false;          // a request is in flight, or a result is on screen
 let clearTimer = null;
 
-const norm = s => (s || '').trim().toUpperCase();
+// serial and asset id upper-case, an address lower-case
+const norm = s => { s = (s || '').trim(); return s.includes('@') ? s.toLowerCase() : s.toUpperCase(); };
 let lastPaint = 0;
 const render = (force) => {
   const now = Date.now();
@@ -165,10 +166,10 @@ function esc(s) { return (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;
 // --- backend ------------------------------------------------------------------
 // POST with a text/plain body and no custom headers: no CORS preflight, and the
 // Apps Script redirect to script.googleusercontent.com stays readable.
-async function call(action, serial) {
+async function call(action, q) {
   const res = await fetch(cfg.backendUrl, {
     method: 'POST',
-    body: JSON.stringify({ token: cfg.token, phone: cfg.phoneId || 'unknown', action, serial }),
+    body: JSON.stringify({ token: cfg.token, phone: cfg.phoneId || 'unknown', action, q }),
   });
   if (!res.ok) throw new Error('HTTP ' + res.status);
   return res.json();
@@ -195,7 +196,7 @@ function showError(r, serial) {
     `<div class="label">${esc(r.error || 'fout')}</div>` +
     (r.asset ? `<div class="asset">${esc(r.asset)}</div>` : '') +
     `<div class="msg">${esc(r.message || 'Er ging iets mis.')}</div>` +
-    `<div class="serial">serial ${esc(serial)}</div>` +
+    `<div class="serial">${esc(serial)}</div>` +
     `<div class="actions"><button class="ok" id="okBtn">Klaar</button></div>`;
   document.getElementById('okBtn').onclick = showIdle;
   scheduleClear();
@@ -207,7 +208,7 @@ function showHit(r) {
     `<div class="label">Naam</div><div class="user">${esc(r.name)||'—'}</div>` +
     `<div class="label">Klas</div><div class="klas">${esc(r.klas)||'—'}</div>` +
     `<div class="acct">${esc(r.email)||'—'}</div>` +
-    `<div class="serial">serial ${esc(r.serial)}</div>` +
+    (r.serial ? `<div class="serial">serial ${esc(r.serial)}</div>` : '') +
     `<div class="actions"><button class="ok" id="okBtn">Klaar</button>` +
     `<button class="reset" id="resetBtn">Wachtwoord resetten</button></div>`;
   document.getElementById('okBtn').onclick = showIdle;
@@ -233,15 +234,14 @@ function showDone(r) {
 }
 
 async function doReset(r) {
-  const btn = document.getElementById('resetBtn');
-  if (!confirm(`Wachtwoord resetten voor ${r.name} (${r.klas})?`)) return;
-  btn.disabled = true;
+  document.getElementById('resetBtn').disabled = true;
   showBusy('Wachtwoord wordt gereset…');
+  const q = r.serial || r.email;
   try {
-    const out = await call('reset', r.serial);
-    if (out.ok) showDone(out); else showError(out, r.serial);
+    const out = await call('reset', q);
+    if (out.ok) showDone(out); else showError(out, q);
   } catch (e) {
-    showError({ error: 'netwerk', message: 'Geen verbinding met de server. ' + e.message }, r.serial);
+    showError({ error: 'netwerk', message: 'Geen verbinding met de server. ' + e.message }, q);
   }
 }
 
@@ -259,17 +259,17 @@ function beep() {
 }
 
 async function lookup(text) {
-  const serial = norm(text);
-  if (!serial || busy) return;
-  if (!configured()) { showError({ error: 'config', message: 'Toestel is nog niet ingesteld. Verwittig ICT.' }, serial); return; }
+  const q = norm(text);
+  if (!q || busy) return;
+  if (!configured()) { showError({ error: 'config', message: 'Toestel is nog niet ingesteld. Verwittig ICT.' }, q); return; }
   busy = true;
   beep();
   showBusy('Opzoeken…');
   try {
-    const out = await call('lookup', serial);
-    if (out.ok) showHit(out); else showError(out, serial);
+    const out = await call('lookup', q);
+    if (out.ok) showHit(out); else showError(out, q);
   } catch (e) {
-    showError({ error: 'netwerk', message: 'Geen verbinding met de server. ' + e.message }, serial);
+    showError({ error: 'netwerk', message: 'Geen verbinding met de server. ' + e.message }, q);
   }
 }
 function handleScan(text) {
