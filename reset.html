@@ -38,7 +38,6 @@
   .msg { font-size: 1.2rem; }
   .pw { font-size: 1.9rem; font-weight: 700; letter-spacing: .02em; white-space: nowrap; overflow-x: auto;
     background: #141a24; padding: .6rem .8rem; border-radius: .5rem; text-align: center; margin: .4rem 0; }
-  .hint { font-size: .8rem; opacity: .6; white-space: pre-wrap; word-break: break-word; margin-top: .6rem; }
   .sys { font-size: 1rem; }
   .sys.ok { color: #7ef0b0; }
   .sys.warn { color: #f0d27e; }
@@ -66,12 +65,11 @@
   <canvas id="preview"></canvas>
 </div>
 <div id="result">
-  <div class="label">Richt de camera op de streepjescode onderaan de Chromebook</div>
-  <div class="hint" id="hint"></div>
+  <div class="label">Richt de camera op de streepjescode onderaan de Chromebook, of typ hieronder het serienummer, het CB-nummer of het leerlingnummer.</div>
 </div>
 <div id="manual">
   <input id="serialInput" type="text" inputmode="text" autocapitalize="characters"
-         placeholder="…of typ serienummer, CB-nummer of account en druk Enter">
+         placeholder="">
 </div>
 
 <script type="module">
@@ -126,8 +124,6 @@ function configure() {
   if (phoneId === null) return;
   cfg = { backendUrl: url.trim(), token: token.trim(), phoneId: phoneId.trim() };
   try { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); } catch (e) {}
-  backLine = configured() ? 'backend: configured' : 'backend: NOT configured';
-  render();
 }
 {
   const $logo = document.getElementById('logo');
@@ -144,18 +140,11 @@ function configure() {
 }
 
 let lastShown = '', lastShownAt = 0;
-let camLine = 'camera: starting…';
-let backLine = configured() ? 'backend: configured' : 'backend: NOT configured (long-press the logo)';
 let busy = false;          // a request is in flight, or a result is on screen
 let clearTimer = null;
 
 // serial and asset id upper-case, an address lower-case
 const norm = s => { s = (s || '').trim(); return s.includes('@') ? s.toLowerCase() : s.toUpperCase(); };
-// camera and backend state, shown under the idle text only
-const render = () => {
-  const h = document.getElementById('hint');
-  if (h) h.textContent = backLine + '\n' + camLine;
-};
 
 function esc(s) { return (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -180,9 +169,7 @@ function showIdle() {
   clearTimeout(clearTimer);
   busy = false;
   $result.className = '';
-  $result.innerHTML = `<div class="label">Richt de camera op de streepjescode onderaan de Chromebook</div>` +
-    `<div class="hint" id="hint"></div>`;
-  render();
+  $result.innerHTML = `<div class="label">Richt de camera op de streepjescode onderaan de Chromebook, of typ hieronder het serienummer, het CB-nummer of het leerlingnummer.</div>`;
 }
 function showBusy(text) {
   $result.className = 'busy';
@@ -309,7 +296,7 @@ async function scanLoop() {
     let results = null;
     if (!busy) {   // no decoding while a result is on screen
       try { results = await readBarcodes(ctx.getImageData(0, 0, w, bandH), READER_OPTIONS); }
-      catch (e) { camLine = 'camera: decode error — ' + ((e && e.message) || e); render(); }
+      catch (e) {}
     }
 
     // preview: show only the window; grey the borders; green lines at the band edges
@@ -340,7 +327,6 @@ async function startCamera() {
   });
   $video.srcObject = stream;
   $video.addEventListener('playing', () => {
-    camLine = `camera: live ${$video.videoWidth}×${$video.videoHeight}`; render();
     tweakTrack(stream);
   }, { once: true });
   await $video.play();
@@ -351,9 +337,8 @@ async function startCamera() {
 $serial.addEventListener('keydown', e => { if (e.key === 'Enter') { lookup($serial.value); $serial.select(); } });
 
 (async () => {
-  render();
   try { await startCamera(); }
-  catch (e) { camLine = 'camera: ERROR — ' + e.name + ': ' + e.message; render(); }
+  catch (e) { showError({ error: 'camera', message: 'Camera niet beschikbaar: ' + e.message }, ''); }
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./service-worker.js').catch(() => {});
 })();
 </script>
