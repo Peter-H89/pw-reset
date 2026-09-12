@@ -246,7 +246,7 @@ function beep() {
 async function lookup(text) {
   const q = norm(text);
   if (!q || busy) return;
-  if (!configured()) { showError({ error: 'config', message: 'Toestel is nog niet ingesteld. Verwittig ICT.' }, q); return; }
+  if (!configured()) { showError({ error: 'config', message: 'Serienummer niet gevonden.' }, q); return; }
   busy = true;
   beep();
   showBusy('Opzoeken…');
