@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Wachtwoord reset</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<meta name="theme-color" content="#0b3d2e">
+<link rel="apple-touch-icon" href="./icon-192.png">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0b1110; color: #e8efe9;
+    font: 16px/1.4 -apple-system, system-ui, sans-serif; }
+  body { display: flex; flex-direction: column; }
+  header { padding: .6rem 1rem; background: #0b3d2e; font-weight: 600;
+    display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+  header .title { display: flex; align-items: center; gap: .5rem; }
+  header #logo { height: 2.5rem; width: auto; display: block; -webkit-user-select: none; user-select: none; }
+  header .btns { display: flex; gap: .4rem; }
+  header button { font: inherit; font-size: .8rem; background: #135c44; color: #e8efe9;
+    border: 0; border-radius: .4rem; padding: .35rem .6rem; }
+  #stage { position: relative; flex: 0 0 auto; background: #000; line-height: 0; }
+  #video { display: none; }                /* hidden source; preview is drawn to the canvas */
+  #preview { width: 100%; max-height: 45vh; display: block; background: #000; }
+  #result { flex: 1 1 auto; padding: 1rem; display: flex; flex-direction: column;
+    justify-content: center; gap: .4rem; transition: background .15s; }
+  #result.hit { background: #0f3d2a; }
+  #result.miss { background: #3d1414; }
+  #result.busy { background: #2a2f1a; }
+  #result.done { background: #12304a; }
+  .label { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; opacity: .65; }
+  .asset { font-size: 2.4rem; font-weight: 700; word-break: break-all; }
+  .user { font-size: 1.5rem; word-break: break-word; }
+  .klas { font-size: 1.3rem; font-weight: 700; }
+  .acct { font-size: 1rem; opacity: .75; word-break: break-all; }
+  .serial { font-size: .85rem; opacity: .6; margin-top: .5rem; word-break: break-all; }
+  .msg { font-size: 1.2rem; }
+  .pw { font-size: 2.6rem; font-weight: 700; letter-spacing: .02em; word-break: break-all;
+    background: #0b1110; padding: .6rem .8rem; border-radius: .5rem; text-align: center; margin: .4rem 0; }
+  .sys { font-size: 1rem; }
+  .sys.ok { color: #7ef0b0; }
+  .sys.warn { color: #f0d27e; }
+  .sys.bad { color: #f09a9a; }
+  .actions { display: flex; gap: .6rem; margin-top: .8rem; }
+  .actions button { flex: 1; font: inherit; font-size: 1.15rem; font-weight: 600; padding: .8rem;
+    border: 0; border-radius: .5rem; color: #e8efe9; }
+  button.reset { background: #b8541a; }
+  button.reset:disabled { opacity: .5; }
+  button.ok { background: #135c44; }
+  #manual { display: flex; gap: .4rem; padding: .5rem 1rem; }
+  #manual input { flex: 1; font: inherit; padding: .4rem; border-radius: .4rem;
+    border: 1px solid #2a3d36; background: #0e1a16; color: #e8efe9; }
+  #status { padding: .5rem 1rem; font-size: .78rem; opacity: .75; border-top: 1px solid #1c2a25;
+    white-space: pre-wrap; word-break: break-word; }
+</style>
+</head>
+<body>
+<header>
+  <span class="title"><img id="logo" src="./vp-logo.png" alt="Vita et Pax" width="260" height="300"> Wachtwoord reset</span>
+  <div class="btns">
+    <button id="torchBtn" hidden>Lamp</button>
+    <button id="photoBtn">Foto</button>
+  </div>
+</header>
+<div id="stage">
+  <video id="video" playsinline muted autoplay></video>
+  <canvas id="preview"></canvas>
+</div>
+<div id="result">
+  <div class="label">Richt de camera op de streepjescode onderaan de Chromebook</div>
+</div>
+<div id="manual">
+  <input id="serialInput" type="text" inputmode="text" autocapitalize="characters"
+         placeholder="…of typ het serienummer en druk Enter">
+</div>
+<input id="fileInput" type="file" accept="image/*" capture="environment" hidden>
+<div id="status">starting…</div>
+
+<script type="module">
+import { prepareZXingModule, readBarcodes } from './zxing-reader.js';
+
+// zxing-cpp (WebAssembly). Force the LOCAL wasm so the shell works from the service
+// worker cache. The default locateFile points at the jsDelivr CDN.
+prepareZXingModule({
+  overrides: {
+    locateFile: (path, prefix) => path.endsWith('.wasm') ? './' + path : prefix + path,
+  },
+});
+const READER_OPTIONS = { tryHarder: true, formats: ['Code128'], maxNumberOfSymbols: 4 };
+// Reject the short SNID barcode (11 chars). Real serials are 22–23 chars.
+const MIN_SERIAL_LEN = 16;
+// Decode only a centre band of the frame (fraction of height).
+const SCAN_BAND = 0.15;
+// The result screen clears itself so a password does not sit on the desk.
+const CLEAR_AFTER_MS = 90 * 1000;
+
+const $result = document.getElementById('result');
+const $status = document.getElementById('status');
+const $video  = document.getElementById('video');
+const $file   = document.getElementById('fileInput');
+const $serial = document.getElementById('serialInput');
+const $torch  = document.getElementById('torchBtn');
+const $preview = document.getElementById('preview');
+const pctx = $preview.getContext('2d');
+
+// --- config: backend URL, token and phone id, set once via long-press on the logo ---
+const CFG_KEY = 'pw-reset-config';
+let cfg = {};
+try { cfg = JSON.parse(localStorage.getItem(CFG_KEY) || '{}'); } catch (e) { cfg = {}; }
+const configured = () => !!(cfg.backendUrl && cfg.token);
+
+function configure() {
+  const url = prompt('Backend URL (/exec)', cfg.backendUrl || '');
+  if (url === null) return;
+  const token = prompt('Token', cfg.token || '');
+  if (token === null) return;
+  const phoneId = prompt('Phone id', cfg.phoneId || 'onthaal-1');
+  if (phoneId === null) return;
+  cfg = { backendUrl: url.trim(), token: token.trim(), phoneId: phoneId.trim() };
+  try { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); } catch (e) {}
+  backLine = configured() ? 'backend: configured' : 'backend: NOT configured';
+  render(true);
+}
+{
+  const $logo = document.getElementById('logo');
+  let timer = null;
+  const start = () => { timer = setTimeout(configure, 1200); };
+  const stop = () => { clearTimeout(timer); };
+  $logo.addEventListener('touchstart', start, { passive: true });
+  $logo.addEventListener('touchend', stop);
+  $logo.addEventListener('touchcancel', stop);
+  $logo.addEventListener('mousedown', start);
+  $logo.addEventListener('mouseup', stop);
+  $logo.addEventListener('mouseleave', stop);
+  $logo.addEventListener('contextmenu', e => e.preventDefault());
+}
+
+let lastShown = '', lastShownAt = 0;
+let camLine = 'camera: starting…';
+let backLine = configured() ? 'backend: configured' : 'backend: NOT configured (long-press the logo)';
+let busy = false;          // a request is in flight, or a result is on screen
+let clearTimer = null;
+
+const norm = s => (s || '').trim().toUpperCase();
+let lastPaint = 0;
+const render = (force) => {
+  const now = Date.now();
+  if (!force && now - lastPaint < 500) return;
+  lastPaint = now;
+  $status.textContent = backLine + '\n' + camLine;
+};
+
+function esc(s) { return (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// --- backend ------------------------------------------------------------------
+// POST with a text/plain body and no custom headers: no CORS preflight, and the
+// Apps Script redirect to script.googleusercontent.com stays readable.
+async function call(action, serial) {
+  const res = await fetch(cfg.backendUrl, {
+    method: 'POST',
+    body: JSON.stringify({ token: cfg.token, phone: cfg.phoneId || 'unknown', action, serial }),
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.json();
+}
+
+// --- screens ------------------------------------------------------------------
+function scheduleClear() {
+  clearTimeout(clearTimer);
+  clearTimer = setTimeout(showIdle, CLEAR_AFTER_MS);
+}
+function showIdle() {
+  clearTimeout(clearTimer);
+  busy = false;
+  $result.className = '';
+  $result.innerHTML = `<div class="label">Richt de camera op de streepjescode onderaan de Chromebook</div>`;
+}
+function showBusy(text) {
+  $result.className = 'busy';
+  $result.innerHTML = `<div class="msg">${esc(text)}</div>`;
+}
+function showError(r, serial) {
+  $result.className = 'miss';
+  $result.innerHTML =
+    `<div class="label">${esc(r.error || 'fout')}</div>` +
+    (r.asset ? `<div class="asset">${esc(r.asset)}</div>` : '') +
+    `<div class="msg">${esc(r.message || 'Er ging iets mis.')}</div>` +
+    `<div class="serial">serial ${esc(serial)}</div>` +
+    `<div class="actions"><button class="ok" id="okBtn">Klaar</button></div>`;
+  document.getElementById('okBtn').onclick = showIdle;
+  scheduleClear();
+}
+function showHit(r) {
+  $result.className = 'hit';
+  $result.innerHTML =
+    `<div class="label">Asset ID</div><div class="asset">${esc(r.asset)||'—'}</div>` +
+    `<div class="label">Naam</div><div class="user">${esc(r.name)||'—'}</div>` +
+    `<div class="label">Klas</div><div class="klas">${esc(r.klas)||'—'}</div>` +
+    `<div class="acct">${esc(r.email)||'—'}</div>` +
+    `<div class="serial">serial ${esc(r.serial)}</div>` +
+    `<div class="actions"><button class="ok" id="okBtn">Klaar</button>` +
+    `<button class="reset" id="resetBtn">Wachtwoord resetten</button></div>`;
+  document.getElementById('okBtn').onclick = showIdle;
+  document.getElementById('resetBtn').onclick = () => doReset(r);
+  scheduleClear();
+}
+function sysLine(label, s, okText) {
+  if (!s) return '';
+  const cls = s.status === 'done' ? 'ok' : s.status === 'skipped' ? 'warn' : 'bad';
+  const text = s.status === 'done' ? okText : (s.message || s.status);
+  return `<div class="sys ${cls}">${esc(label)}: ${esc(text)}</div>`;
+}
+function showDone(r) {
+  $result.className = 'done';
+  $result.innerHTML =
+    `<div class="label">Nieuw wachtwoord voor ${esc(r.name)} (${esc(r.klas)})</div>` +
+    `<div class="pw">${esc(r.password)}</div>` +
+    sysLine('Google', r.google, 'gedaan') +
+    sysLine('Smartschool', r.smartschool, 'gedaan') +
+    `<div class="actions"><button class="ok" id="okBtn">Klaar</button></div>`;
+  document.getElementById('okBtn').onclick = showIdle;
+  scheduleClear();
+}
+
+async function doReset(r) {
+  const btn = document.getElementById('resetBtn');
+  if (!confirm(`Wachtwoord resetten voor ${r.name} (${r.klas})?\n\nControleer dat dit de leerling voor je is.`)) return;
+  btn.disabled = true;
+  showBusy('Wachtwoord wordt gereset…');
+  try {
+    const out = await call('reset', r.serial);
+    if (out.ok) showDone(out); else showError(out, r.serial);
+  } catch (e) {
+    showError({ error: 'netwerk', message: 'Geen verbinding met de server. ' + e.message }, r.serial);
+  }
+}
+
+let audioCtx;
+function beep() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = 'square'; o.frequency.value = 880; o.connect(g); g.connect(audioCtx.destination);
+    g.gain.setValueAtTime(.08, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(.0001, audioCtx.currentTime + .15);
+    o.start(); o.stop(audioCtx.currentTime + .15);
+  } catch (e) {}
+  try { navigator.vibrate && navigator.vibrate(60); } catch (e) {}
+}
+
+async function lookup(text) {
+  const serial = norm(text);
+  if (!serial || busy) return;
+  if (!configured()) { showError({ error: 'config', message: 'Toestel is nog niet ingesteld. Verwittig ICT.' }, serial); return; }
+  busy = true;
+  beep();
+  showBusy('Opzoeken…');
+  try {
+    const out = await call('lookup', serial);
+    if (out.ok) showHit(out); else showError(out, serial);
+  } catch (e) {
+    showError({ error: 'netwerk', message: 'Geen verbinding met de server. ' + e.message }, serial);
+  }
+}
+function handleScan(text) {
+  const serial = norm(text), now = Date.now();
+  if (serial === lastShown && now - lastShownAt < 1500) return;  // debounce repeats
+  lastShown = serial; lastShownAt = now;
+  lookup(serial);
+}
+
+// ---- camera + live decode (zxing-cpp on each frame) ----
+async function tweakTrack(stream) {
+  const track = stream && stream.getVideoTracks && stream.getVideoTracks()[0];
+  if (!track) return;
+  const caps = track.getCapabilities ? track.getCapabilities() : {};
+  if (caps.focusMode && caps.focusMode.includes('continuous')) {
+    try { await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (e) {}
+  }
+  if (caps.torch) {
+    $torch.hidden = false;
+    let on = false;
+    $torch.onclick = async () => { on = !on; try { await track.applyConstraints({ advanced: [{ torch: on }] }); } catch (e) {} };
+  }
+}
+
+const canvas = document.createElement('canvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+async function scanLoop() {
+  if ($video.readyState >= 2 && $video.videoWidth) {
+    const w = $video.videoWidth, h = $video.videoHeight;
+    const bandH = Math.max(8, Math.round(h * SCAN_BAND));
+    const borderH = bandH;                  // grey border, same height as the band
+    const winH = bandH + borderH * 2;        // visible window = 3× the band, centred
+    const winTop = Math.round((h - winH) / 2);
+
+    // decode: only the centre band, source-cropped straight from the video
+    if (canvas.width !== w || canvas.height !== bandH) { canvas.width = w; canvas.height = bandH; }
+    ctx.drawImage($video, 0, winTop + borderH, w, bandH, 0, 0, w, bandH);
+    let results = null;
+    if (!busy) {   // no decoding while a result is on screen
+      try { results = await readBarcodes(ctx.getImageData(0, 0, w, bandH), READER_OPTIONS); }
+      catch (e) { camLine = 'camera: decode error — ' + ((e && e.message) || e); render(true); }
+    }
+
+    // preview: show only the window; grey the borders; green lines at the band edges
+    if ($preview.width !== w || $preview.height !== winH) { $preview.width = w; $preview.height = winH; }
+    pctx.drawImage($video, 0, winTop, w, winH, 0, 0, w, winH);
+    pctx.fillStyle = 'rgba(0,0,0,.55)';
+    pctx.fillRect(0, 0, w, borderH);
+    pctx.fillRect(0, borderH + bandH, w, borderH);
+    pctx.strokeStyle = busy ? 'rgba(255,255,255,.35)' : 'rgba(80,255,160,.95)';
+    pctx.lineWidth = Math.max(2, Math.round(h * 0.0025));
+    pctx.beginPath();
+    pctx.moveTo(0, borderH); pctx.lineTo(w, borderH);
+    pctx.moveTo(0, borderH + bandH); pctx.lineTo(w, borderH + bandH);
+    pctx.stroke();
+
+    // accept only a code long enough to be a real serial; the short SNID is dropped
+    if (results && results.length) {
+      const good = results.find(r => r.text.trim().length >= MIN_SERIAL_LEN);
+      if (good) handleScan(good.text);
+    }
+  }
+  requestAnimationFrame(scanLoop);   // guarded: next frame only after this decode resolves
+}
+
+async function startCamera() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1440 } },
+  });
+  $video.srcObject = stream;
+  $video.addEventListener('playing', () => {
+    camLine = `camera: live ${$video.videoWidth}×${$video.videoHeight} — scanning…`; render(true);
+    tweakTrack(stream);
+  }, { once: true });
+  await $video.play();
+  scanLoop();
+}
+
+// photo fallback + manual entry
+$file.addEventListener('change', async () => {
+  const f = $file.files[0]; if (!f) return;
+  try {
+    const results = await readBarcodes(f, READER_OPTIONS);
+    const good = results && results.find(r => r.text.trim().length >= MIN_SERIAL_LEN);
+    if (good) handleScan(good.text);
+    else showError({ error: 'foto', message: 'Geen streepjescode gevonden.' }, '');
+  } catch (e) {
+    showError({ error: 'foto', message: 'Geen streepjescode gevonden.' }, '');
+  } finally { $file.value = ''; }
+});
+document.getElementById('photoBtn').addEventListener('click', () => $file.click());
+$serial.addEventListener('keydown', e => { if (e.key === 'Enter') { lookup($serial.value); $serial.select(); } });
+
+(async () => {
+  render(true);
+  try { await startCamera(); }
+  catch (e) { camLine = 'camera: ERROR — ' + e.name + ': ' + e.message + ' (needs https or localhost + permission)'; render(true); }
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./service-worker.js').catch(() => {});
+})();
+</script>
+</body>
+</html>
