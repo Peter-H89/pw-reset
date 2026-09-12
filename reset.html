@@ -60,7 +60,6 @@
   <span class="title"><img id="logo" src="./vp-logo.png" alt="Vita et Pax" width="260" height="300"> Wachtwoord reset</span>
   <div class="btns">
     <button id="torchBtn" hidden>Lamp</button>
-    <button id="photoBtn">Foto</button>
   </div>
 </header>
 <div id="stage">
@@ -74,7 +73,6 @@
   <input id="serialInput" type="text" inputmode="text" autocapitalize="characters"
          placeholder="…of typ het serienummer en druk Enter">
 </div>
-<input id="fileInput" type="file" accept="image/*" capture="environment" hidden>
 <div id="status">starting…</div>
 
 <script type="module">
@@ -98,7 +96,6 @@ const CLEAR_AFTER_MS = 90 * 1000;
 const $result = document.getElementById('result');
 const $status = document.getElementById('status');
 const $video  = document.getElementById('video');
-const $file   = document.getElementById('fileInput');
 const $serial = document.getElementById('serialInput');
 const $torch  = document.getElementById('torchBtn');
 const $preview = document.getElementById('preview');
@@ -237,7 +234,7 @@ function showDone(r) {
 
 async function doReset(r) {
   const btn = document.getElementById('resetBtn');
-  if (!confirm(`Wachtwoord resetten voor ${r.name} (${r.klas})?\n\nControleer dat dit de leerling voor je is.`)) return;
+  if (!confirm(`Wachtwoord resetten voor ${r.name} (${r.klas})?`)) return;
   btn.disabled = true;
   showBusy('Wachtwoord wordt gereset…');
   try {
@@ -352,19 +349,7 @@ async function startCamera() {
   scanLoop();
 }
 
-// photo fallback + manual entry
-$file.addEventListener('change', async () => {
-  const f = $file.files[0]; if (!f) return;
-  try {
-    const results = await readBarcodes(f, READER_OPTIONS);
-    const good = results && results.find(r => r.text.trim().length >= MIN_SERIAL_LEN);
-    if (good) handleScan(good.text);
-    else showError({ error: 'foto', message: 'Geen streepjescode gevonden.' }, '');
-  } catch (e) {
-    showError({ error: 'foto', message: 'Geen streepjescode gevonden.' }, '');
-  } finally { $file.value = ''; }
-});
-document.getElementById('photoBtn').addEventListener('click', () => $file.click());
+// manual entry
 $serial.addEventListener('keydown', e => { if (e.key === 'Enter') { lookup($serial.value); $serial.select(); } });
 
 (async () => {
