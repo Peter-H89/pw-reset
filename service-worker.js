@@ -1,7 +1,7 @@
 // Offline cache for the app shell only. Backend calls are never cached: they are
 // POSTs, and the fetch handler below ignores anything that is not a GET of the shell.
 // Bump CACHE on any shell edit, or an installed PWA keeps serving the old one.
-const CACHE = 'pw-reset-v7';
+const CACHE = 'pw-reset-v8';
 const SHELL = [
   './',
   './reset.html',

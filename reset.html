@@ -64,12 +64,12 @@
   <video id="video" playsinline muted autoplay></video>
   <canvas id="preview"></canvas>
 </div>
-<div id="result">
-  <div class="label">Richt de camera op de streepjescode onderaan de Chromebook, of typ hieronder het serienummer, het CB-nummer of het leerlingnummer.</div>
-</div>
 <div id="manual">
   <input id="serialInput" type="text" inputmode="text" autocapitalize="characters"
          placeholder="">
+</div>
+<div id="result">
+  <div class="label">Richt de camera op de streepjescode onderaan de Chromebook, of typ hierboven het serienummer, het CB-nummer of het leerlingnummer.</div>
 </div>
 
 <script type="module">
@@ -169,7 +169,7 @@ function showIdle() {
   clearTimeout(clearTimer);
   busy = false;
   $result.className = '';
-  $result.innerHTML = `<div class="label">Richt de camera op de streepjescode onderaan de Chromebook, of typ hieronder het serienummer, het CB-nummer of het leerlingnummer.</div>`;
+  $result.innerHTML = `<div class="label">Richt de camera op de streepjescode onderaan de Chromebook, of typ hierboven het serienummer, het CB-nummer of het leerlingnummer.</div>`;
 }
 function showBusy(text) {
   $result.className = 'busy';
